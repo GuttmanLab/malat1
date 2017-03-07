@@ -23,6 +23,7 @@ import edu.caltech.lncrna.bio.alignment.PairedEndAlignment;
 import edu.caltech.lncrna.bio.alignment.SingleReadAlignment;
 import edu.caltech.lncrna.bio.annotation.BedFileRecord;
 import edu.caltech.lncrna.bio.annotation.Block;
+import edu.caltech.lncrna.bio.annotation.Strand;
 import edu.caltech.lncrna.bio.datastructures.GenomeTree;
 import edu.caltech.lncrna.bio.io.BedParser;
 import edu.caltech.lncrna.bio.io.PairedEndBamParser;
@@ -33,9 +34,11 @@ public class PolymeraseThreePrimeCounter {
     private Path bamPath;
     private Path outputPath;
     
-    private GenomeTree<Block> introns;
-    private GenomeTree<PairedEndAlignment> fragments;
-    private Map<Splicing, Map<Integer, Integer>> countsByPosition;
+    private final GenomeTree<Block> introns = new GenomeTree<>();
+    private final GenomeTree<PairedEndAlignment> fragments =
+            new GenomeTree<>();
+    private final Map<Splicing, Map<Integer, Integer>> countsByPosition =
+            new HashMap<>();
     
     private static int MAX_INSERT_SIZE = 1000;
     
@@ -137,9 +140,7 @@ public class PolymeraseThreePrimeCounter {
     private PolymeraseThreePrimeCounter loadReads() {
 
         try (PairedEndBamParser records = new PairedEndBamParser(bamPath)) {
-            records.stream()
-                   .filter(x -> x.hasAlignment())
-                   .map(x -> x.getAlignment().get())
+            records.getAlignmentStream()
                    .filter(x -> introns.overlaps(x.getHull()))
                    .forEach(x -> fragments.insert(x));
         }
@@ -149,7 +150,6 @@ public class PolymeraseThreePrimeCounter {
     
     private PolymeraseThreePrimeCounter calculatePolPositionsForIntrons() {
         
-        countsByPosition = new HashMap<>();
         countsByPosition.put(Splicing.SPLICED, new TreeMap<>());
         countsByPosition.put(Splicing.UNSPLICED, new TreeMap<>());
         
@@ -183,7 +183,9 @@ public class PolymeraseThreePrimeCounter {
         if (splice.isValid) {
             int intronThreePrime = intron.getThreePrimePosition();
             int polymerasePosition = fragment.getThreePrimePosition();
-            int relativePolPosition = polymerasePosition - intronThreePrime;
+            int relativePolPosition = fragment.getStrand().equals(Strand.POSITIVE)
+                    ? polymerasePosition - intronThreePrime
+                    : intronThreePrime - polymerasePosition;
             Map<Integer, Integer> spliceMap = countsByPosition.get(splice);
             int count = spliceMap.getOrDefault(relativePolPosition, 0);
             spliceMap.put(relativePolPosition, count + 1);
@@ -310,7 +312,8 @@ public class PolymeraseThreePrimeCounter {
      * <p>
      * A read can map to a region that is definitely spliced, a region that is
      * definitely unspliced, or a region about which we cannot discern the
-     * splice state. 
+     * splice state. An invalid splicing indicates that we get conflicting
+     * splicing information from the two reads in a read-pair. 
      */
     private enum Splicing {
 
